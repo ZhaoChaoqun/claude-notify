@@ -33,11 +33,23 @@ Without alerter, basic notifications still work. Claude Code will fall back to i
 
 ## Install
 
+### From marketplace (recommended)
+
+```bash
+# Add marketplace (one-time)
+/plugin marketplace add ZhaoChaoqun/claude-plugins
+
+# Install plugin
+/plugin install claude-notify@zhaochaoqun-plugins
+```
+
+### From npm-style command
+
 ```bash
 claude plugin install claude-notify
 ```
 
-Or load from a local clone:
+### From a local clone
 
 ```bash
 git clone https://github.com/ZhaoChaoqun/claude-notify.git
