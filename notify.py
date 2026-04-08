@@ -120,6 +120,17 @@ def detect_terminal(pid=None):
 # Notification dispatch
 # ---------------------------------------------------------------------------
 
+def find_alerter():
+    """Find alerter binary."""
+    path = shutil.which("alerter")
+    if path:
+        return path
+    for p in ("/opt/homebrew/bin/alerter", "/usr/local/bin/alerter"):
+        if os.path.isfile(p):
+            return p
+    return None
+
+
 def find_notifier():
     """Find terminal-notifier binary."""
     path = shutil.which("terminal-notifier")
@@ -169,8 +180,19 @@ def send_notification(terminal, tty, pid):
         # cmux binary not found, fall through to terminal-notifier
 
     notifier = find_notifier()
+    alerter = find_alerter()
 
-    if notifier:
+    if alerter:
+        cmd = [
+            alerter,
+            "--title", "Claude Code",
+            "--message", "Claude 完成了，来看看吧",
+            "--sound", "Glass",
+            "--timeout", "10",
+        ]
+        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+    elif notifier:
         cmd = [
             notifier,
             "-title", "Claude Code",
