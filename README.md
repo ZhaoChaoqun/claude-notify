@@ -37,10 +37,11 @@ Without alerter, basic notifications still work. Claude Code will fall back to i
 claude plugin install claude-notify
 ```
 
-Or install from source:
+Or load from a local clone:
 
 ```bash
-claude plugin install /path/to/claude-notify
+git clone https://github.com/ZhaoChaoqun/claude-notify.git
+claude --plugin-dir ./claude-notify
 ```
 
 ## How It Works
