@@ -163,7 +163,7 @@ def main():
     tool_name = data.get("tool_name", "Unknown Tool")
 
     # AskUserQuestion is handled natively by Claude Code in the terminal.
-    # Don't intercept it with alerter — that would block the terminal UI.
+    # It triggers PreToolUse (not PermissionRequest), so question.py handles notification.
     if tool_name == "AskUserQuestion":
         return
 

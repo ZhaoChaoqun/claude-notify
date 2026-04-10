@@ -19,6 +19,17 @@ PLUGIN_ROOT = os.path.dirname(os.path.abspath(__file__))
 FOCUSERS_DIR = os.path.join(PLUGIN_ROOT, "focusers")
 
 
+def find_alerter():
+    """Find alerter binary."""
+    path = shutil.which("alerter")
+    if path:
+        return path
+    for p in ("/opt/homebrew/bin/alerter", "/usr/local/bin/alerter"):
+        if os.path.isfile(p):
+            return p
+    return None
+
+
 def find_notifier():
     """Find terminal-notifier binary."""
     path = shutil.which("terminal-notifier")
@@ -114,30 +125,24 @@ def focus_terminal(terminal, tty, pid):
 def send_notification(message, terminal, tty, pid):
     """Send a notification and focus the terminal."""
 
-    # iTerm2 — OSC 9 escape sequence (auto-focuses on click)
-    if terminal == "iterm2" and tty:
-        try:
-            with open(tty, "w") as f:
-                f.write(f"\033]9;{message}\007")
-            return
-        except (OSError, IOError):
-            pass
-
-    # cmux — native notify
-    if terminal == "cmux":
-        cmux_bin = shutil.which("cmux")
-        if cmux_bin:
-            subprocess.Popen(
-                [cmux_bin, "notify", message],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
-            return
-
+    alerter = find_alerter()
     notifier = find_notifier()
-    if notifier:
+
+    if alerter:
         subprocess.Popen(
-            [notifier, "-title", "Claude Code", "-message", message, "-sound", "Glass"],
+            [
+                alerter,
+                "--title", "Claude Code — 提问",
+                "--message", message,
+                "--sound", "Glass",
+                "--timeout", "10",
+            ],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    elif notifier:
+        subprocess.Popen(
+            [notifier, "-title", "Claude Code — 提问", "-message", message, "-sound", "Glass"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
@@ -146,7 +151,7 @@ def send_notification(message, terminal, tty, pid):
             [
                 "osascript", "-e",
                 f'display notification "{message}" '
-                'with title "Claude Code" sound name "Glass"',
+                'with title "Claude Code — 提问" sound name "Glass"',
             ],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             start_new_session=True,
