@@ -1,19 +1,13 @@
 #!/usr/bin/env python3
 """
-claude-notify question — PreToolUse hook for AskUserQuestion.
+claude-notify question — Notification hook for AskUserQuestion.
 
-When Claude asks the user a question via AskUserQuestion, this hook
-shows a macOS alert via `alerter` with the question and option buttons.
-The user's selection is returned as JSON on stdout so Claude Code can
-proceed without terminal interaction.
+When Claude asks the user a question, this hook sends a macOS notification
+to alert the user. The question is displayed normally in the terminal —
+this hook does NOT intercept or block it.
 
-Constraints:
-- Single question only (multiple questions fall back to terminal)
-- Up to 3 options (more than 3 fall back to terminal)
-- Requires alerter (brew install alerter)
-
-If any constraint is not met, exits silently to let Claude Code show
-the normal terminal-based question UI.
+Clicking the notification focuses the correct terminal pane so the user
+can answer the question there.
 """
 import json
 import os
@@ -21,27 +15,144 @@ import shutil
 import subprocess
 import sys
 
-ALERTER_TIMEOUT = 120
-MAX_OPTIONS = 3
-MAX_LABEL_LEN = 40
+PLUGIN_ROOT = os.path.dirname(os.path.abspath(__file__))
+FOCUSERS_DIR = os.path.join(PLUGIN_ROOT, "focusers")
 
 
-def find_alerter():
-    """Find alerter binary."""
-    path = shutil.which("alerter")
+def find_notifier():
+    """Find terminal-notifier binary."""
+    path = shutil.which("terminal-notifier")
     if path:
         return path
-    for p in ("/opt/homebrew/bin/alerter", "/usr/local/bin/alerter"):
+    for p in ("/opt/homebrew/bin/terminal-notifier", "/usr/local/bin/terminal-notifier"):
         if os.path.isfile(p):
             return p
     return None
 
 
-def truncate(text, max_len):
-    """Truncate text with ellipsis if too long."""
-    if len(text) <= max_len:
-        return text
-    return text[: max_len - 3] + "..."
+def get_tty():
+    """Get the TTY by walking up the process tree until we find one."""
+    try:
+        result = subprocess.run(
+            ["ps", "-axo", "pid=,ppid=,tty="],
+            capture_output=True, text=True, timeout=2,
+        )
+        pids = {}
+        for line in result.stdout.strip().splitlines():
+            parts = line.split()
+            if len(parts) >= 3:
+                try:
+                    pids[int(parts[0])] = (int(parts[1]), parts[2])
+                except ValueError:
+                    pass
+        current = os.getpid()
+        for _ in range(30):
+            info = pids.get(current)
+            if info is None:
+                break
+            ppid, tty = info
+            if tty and tty not in ("??", "-"):
+                return tty if tty.startswith("/dev/") else f"/dev/{tty}"
+            current = ppid
+    except Exception:
+        pass
+    return None
+
+
+def detect_terminal(pid=None):
+    """Detect terminal type by walking the process tree."""
+    if pid is None:
+        pid = os.getppid()
+    try:
+        result = subprocess.run(
+            ["ps", "-axo", "pid=,ppid=,comm="],
+            capture_output=True, text=True, timeout=3,
+        )
+        tree = {}
+        for line in result.stdout.strip().splitlines():
+            parts = line.split(None, 2)
+            if len(parts) >= 3:
+                try:
+                    tree[int(parts[0])] = (int(parts[1]), parts[2])
+                except ValueError:
+                    pass
+    except Exception:
+        return "unknown"
+
+    current = pid
+    for _ in range(30):
+        info = tree.get(current)
+        if info is None:
+            break
+        ppid, comm = info
+        name = os.path.basename(comm).lower()
+        if "cmux" in name:
+            return "cmux"
+        if name.startswith("tmux"):
+            return "tmux"
+        if name in ("iterm2", "iterm", "itermserver-main"):
+            return "iterm2"
+        if name in ("terminal", "terminal.app"):
+            return "terminal_app"
+        current = ppid
+
+    return "unknown"
+
+
+def focus_terminal(terminal, tty, pid):
+    """Focus the correct terminal pane/tab by running the focuser script."""
+    focus_script = os.path.join(FOCUSERS_DIR, f"{terminal}.sh")
+    if not os.path.isfile(focus_script) or not tty:
+        return
+    subprocess.Popen(
+        ["bash", focus_script, tty, str(pid or "")],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+
+def send_notification(message, terminal, tty, pid):
+    """Send a notification and focus the terminal."""
+
+    # iTerm2 — OSC 9 escape sequence (auto-focuses on click)
+    if terminal == "iterm2" and tty:
+        try:
+            with open(tty, "w") as f:
+                f.write(f"\033]9;{message}\007")
+            return
+        except (OSError, IOError):
+            pass
+
+    # cmux — native notify
+    if terminal == "cmux":
+        cmux_bin = shutil.which("cmux")
+        if cmux_bin:
+            subprocess.Popen(
+                [cmux_bin, "notify", message],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            return
+
+    notifier = find_notifier()
+    if notifier:
+        subprocess.Popen(
+            [notifier, "-title", "Claude Code", "-message", message, "-sound", "Glass"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    else:
+        subprocess.Popen(
+            [
+                "osascript", "-e",
+                f'display notification "{message}" '
+                'with title "Claude Code" sound name "Glass"',
+            ],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+
+    focus_terminal(terminal, tty, pid)
 
 
 def main():
@@ -51,79 +162,11 @@ def main():
     except (json.JSONDecodeError, ValueError):
         return
 
-    if data.get("hook_event_name") != "PreToolUse":
-        return
-    if data.get("tool_name") != "AskUserQuestion":
-        return
+    tty = get_tty()
+    pid = os.getppid()
+    terminal = detect_terminal(pid)
 
-    tool_input = data.get("tool_input", {})
-    questions = tool_input.get("questions", [])
-
-    # Only handle single question with <= MAX_OPTIONS options
-    if len(questions) != 1:
-        return
-    question = questions[0]
-    options = question.get("options", [])
-    if not options or len(options) > MAX_OPTIONS:
-        return
-
-    # Labels with commas would be split by alerter's --actions parser
-    raw_labels = [opt.get("label", "") for opt in options]
-    if any("," in label for label in raw_labels):
-        return
-
-    alerter = find_alerter()
-    if not alerter:
-        return
-
-    question_text = question.get("question", "")
-    header = question.get("header", "")
-    title = f"Claude Code — {header}" if header else "Claude Code"
-
-    # Build alerter command — all options go in --actions,
-    # close button is "Skip" (falls back to terminal on click)
-    labels = [truncate(opt.get("label", ""), MAX_LABEL_LEN) for opt in options]
-
-    cmd = [
-        alerter,
-        "--title", title,
-        "--message", question_text,
-        "--close-label", "Skip",
-        "--actions", ",".join(labels),
-        "--timeout", str(ALERTER_TIMEOUT),
-        "--sound", "default",
-    ]
-
-    try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=ALERTER_TIMEOUT + 5,
-        )
-        answer = result.stdout.strip()
-    except (subprocess.TimeoutExpired, OSError):
-        return
-
-    # Map alerter output to the original (untruncated) option label
-    selected = None
-    for i, label in enumerate(labels):
-        if answer == label:
-            selected = options[i].get("label", "")
-            break
-
-    if selected is None:
-        # @CLOSED, @TIMEOUT, Skip, or unexpected — fall back to terminal
-        return
-
-    updated_input = dict(tool_input)
-    updated_input["answers"] = {question_text: selected}
-
-    decision = {
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "allow",
-            "updatedInput": updated_input,
-        }
-    }
-    json.dump(decision, sys.stdout, ensure_ascii=False)
+    send_notification("Claude 有问题想问你", terminal, tty, pid)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,7 @@
 # claude-notify
 
+[English](README.md) | [中文](README_CN.md)
+
 Claude Code plugin -- click a notification, jump back to the right terminal pane.
 
 When Claude Code needs your attention, `claude-notify` sends a macOS notification. Click it and you're taken straight to the correct terminal window, tab, and pane -- no hunting through windows.
@@ -36,17 +38,11 @@ Without alerter, basic notifications still work. Claude Code will fall back to i
 ### From marketplace (recommended)
 
 ```bash
-# Add marketplace (one-time)
+# 1. Add marketplace (one-time setup)
 /plugin marketplace add ZhaoChaoqun/claude-plugins
 
-# Install plugin
+# 2. Install plugin
 /plugin install claude-notify@zhaochaoqun-plugins
-```
-
-### From npm-style command
-
-```bash
-claude plugin install claude-notify
 ```
 
 ### From a local clone
@@ -55,6 +51,31 @@ claude plugin install claude-notify
 git clone https://github.com/ZhaoChaoqun/claude-notify.git
 claude --plugin-dir ./claude-notify
 ```
+
+> **Note:** Local clone mode runs directly from the cloned directory. Changes to the local files take effect immediately without any update step.
+
+## Update
+
+### Marketplace install
+
+```bash
+claude plugin update claude-notify@zhaochaoqun-plugins
+```
+
+After updating, run `/reload-plugins` in your Claude Code session to activate changes immediately, or restart the session.
+
+### Local clone
+
+```bash
+cd /path/to/claude-notify
+git pull
+```
+
+No restart needed — the latest code is used on the next hook invocation.
+
+### Auto-update
+
+Claude Code **does not auto-update plugins**. You need to manually run the update command above to get the latest version. We recommend checking for updates occasionally, especially if you encounter any issues.
 
 ## How It Works
 
@@ -99,14 +120,17 @@ claude-notify/
 ├── .claude-plugin/
 │   └── plugin.json          # Plugin metadata
 ├── hooks/
-│   └── hooks.json           # Notification hook declaration
-├── notify.py                # Entry point: detect terminal, send notification
+│   └── hooks.json           # Hook declarations
+├── notify.py                # Stop hook: detect terminal, send notification
+├── approve.py               # PermissionRequest hook: alerter dialog + pane focus
+├── question.py              # PreToolUse hook: alerter for AskUserQuestion
 ├── focusers/
 │   ├── iterm2.sh            # iTerm2 AppleScript focus
 │   ├── terminal_app.sh      # Terminal.app AppleScript focus
 │   ├── tmux.sh              # tmux pane select + host activation
 │   └── cmux.sh              # cmux native notify
 ├── README.md
+├── README_CN.md
 └── LICENSE
 ```
 

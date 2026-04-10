@@ -161,6 +161,12 @@ def main():
         return  # No alerter — fall back to terminal prompt
 
     tool_name = data.get("tool_name", "Unknown Tool")
+
+    # AskUserQuestion is handled natively by Claude Code in the terminal.
+    # Don't intercept it with alerter — that would block the terminal UI.
+    if tool_name == "AskUserQuestion":
+        return
+
     tool_input = data.get("tool_input", {})
     summary = summarize_tool_input(tool_name, tool_input)
 
