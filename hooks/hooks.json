@@ -6,7 +6,8 @@
           {
             "type": "command",
             "command": "python3 ${CLAUDE_PLUGIN_ROOT}/notify.py",
-            "timeout": 10
+            "timeout": 10,
+            "async": true
           }
         ]
       }
@@ -17,7 +18,8 @@
           {
             "type": "command",
             "command": "python3 ${CLAUDE_PLUGIN_ROOT}/notify.py --failure",
-            "timeout": 10
+            "timeout": 10,
+            "async": true
           }
         ]
       }
@@ -29,7 +31,8 @@
           {
             "type": "command",
             "command": "python3 ${CLAUDE_PLUGIN_ROOT}/question.py",
-            "timeout": 10
+            "timeout": 10,
+            "async": true
           }
         ]
       }
@@ -40,7 +43,8 @@
           {
             "type": "command",
             "command": "python3 ${CLAUDE_PLUGIN_ROOT}/notification.py",
-            "timeout": 10
+            "timeout": 10,
+            "async": true
           }
         ]
       }
