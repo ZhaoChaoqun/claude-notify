@@ -2,18 +2,16 @@
 
 [English](README.md) | [中文](README_CN.md)
 
-Claude Code plugin -- click a notification, jump back to the right terminal pane.
+Claude Code plugin -- click a notification to jump back to the right terminal pane.
 
-When Claude Code needs your attention, `claude-notify` sends a macOS notification. Click it and you're taken straight to the correct terminal window, tab, and pane -- no hunting through windows.
+When Claude Code needs your attention, `claude-notify` sends a macOS notification. In iTerm2, clicking the notification takes you straight to the correct session -- no hunting through windows.
 
-## Supported Terminals
+## How Notifications Work
 
-| Terminal | Jump Level | How It Works |
-|----------|-----------|--------------|
-| **iTerm2** | Session (pane) | AppleScript TTY matching |
-| **tmux** | Pane | `tmux select-pane` + host terminal activation |
-| **cmux** | Native | `cmux notify` with built-in panel jump |
-| **Terminal.app** | Tab | AppleScript TTY matching |
+| Terminal | Notification | Click to Focus |
+|----------|-------------|----------------|
+| **iTerm2** | OSC 9 (native) | Auto-focuses the correct session |
+| **Other** | osascript (macOS built-in) | No auto-focus |
 
 Terminal detection is automatic -- zero configuration needed.
 
@@ -21,17 +19,9 @@ Terminal detection is automatic -- zero configuration needed.
 
 - macOS
 - Python 3 (ships with macOS)
-- [terminal-notifier](https://github.com/julienXX/terminal-notifier) — for notifications (not needed for cmux)
-- [alerter](https://github.com/vjeantet/alerter) — optional, for approve/deny and question notifications
+- iTerm2 (recommended, for the best experience)
 
-```bash
-brew install terminal-notifier
-
-# Optional: enables approve/deny buttons and interactive question notifications
-brew install vjeantet/tap/alerter
-```
-
-Without alerter, basic notifications still work. Claude Code will fall back to its terminal-based prompts for permission requests and questions.
+No third-party tools required. No `brew install` needed.
 
 ## Install
 
@@ -86,32 +76,14 @@ Claude Code fires Stop hook (task complete, waiting for input)
         |
    Detects terminal type (process tree walk)
         |
-   +-- cmux? --> cmux notify (native, done)
+   +-- iTerm2? --> OSC 9 to TTY (native notification, auto-focus on click)
    |
-   +-- other --> terminal-notifier with -execute
-                        |
-                  User clicks notification
-                        |
-                  focusers/{terminal}.sh runs
-                        |
-                  Terminal pane activated
+   +-- other --> osascript display notification (macOS built-in)
 ```
 
 ### Terminal Detection
 
-`notify.py` walks up the process tree from Claude's PID:
-
-1. **cmux** -- if a `cmux` process is found, use `cmux notify`
-2. **tmux** -- if a `tmux` process is found, use `tmux select-pane` + activate host terminal
-3. **iTerm2** -- if `iTerm2`/`iTermServer-main` is found, use AppleScript
-4. **Terminal.app** -- if `Terminal` is found, use AppleScript
-
-### tmux Two-Layer Jump
-
-tmux runs inside a host terminal. `claude-notify` handles both layers:
-
-1. `tmux select-window` + `tmux select-pane` -- switch to the correct tmux pane
-2. Detect and activate the host terminal app (iTerm2 or Terminal.app)
+`notify.py` walks up the process tree from Claude's PID. If an iTerm2 process is found, it uses OSC 9 for native notifications with auto-focus. Otherwise, it falls back to `osascript display notification`.
 
 ## Project Structure
 
@@ -122,13 +94,7 @@ claude-notify/
 ├── hooks/
 │   └── hooks.json           # Hook declarations
 ├── notify.py                # Stop hook: detect terminal, send notification
-├── approve.py               # PermissionRequest hook: alerter dialog + pane focus
-├── question.py              # PreToolUse hook: alerter for AskUserQuestion
-├── focusers/
-│   ├── iterm2.sh            # iTerm2 AppleScript focus
-│   ├── terminal_app.sh      # Terminal.app AppleScript focus
-│   ├── tmux.sh              # tmux pane select + host activation
-│   └── cmux.sh              # cmux native notify
+├── question.py              # PreToolUse hook: notification for AskUserQuestion
 ├── README.md
 ├── README_CN.md
 └── LICENSE
@@ -137,16 +103,12 @@ claude-notify/
 ## Troubleshooting
 
 **Notifications don't appear?**
-- Check that `terminal-notifier` is installed: `which terminal-notifier`
-- macOS may need notification permission for terminal-notifier. Open System Settings > Notifications and ensure terminal-notifier is allowed.
+- In iTerm2: check Preferences > Profiles > Terminal > "Enable notifications" is on.
+- macOS may need notification permission for iTerm2. Open System Settings > Notifications and ensure iTerm2 is allowed.
 
 **Click doesn't jump to the right pane?**
+- Auto-focus only works in iTerm2 via OSC 9. Other terminals use osascript which does not support click-to-focus.
 - The plugin detects terminals by walking the process tree. If Claude Code is started in an unusual way (e.g., via `ssh`), detection may fail.
-- For tmux, make sure the `tmux` binary is in your `$PATH`.
-
-**cmux notifications?**
-- cmux has built-in notification support. The plugin calls `cmux notify` directly -- no terminal-notifier needed.
-- Make sure `cmux` is in your `$PATH`.
 
 ## License
 

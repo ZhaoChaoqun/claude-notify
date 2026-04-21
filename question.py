@@ -6,29 +6,18 @@ When Claude asks the user a question, this hook sends a macOS notification
 to alert the user. The question is displayed normally in the terminal —
 this hook does NOT intercept or block it.
 
-Clicking the notification focuses the correct terminal pane so the user
-can answer the question there.
+For iTerm2: uses OSC 9 which auto-focuses the correct session on click.
+For others: falls back to osascript.
 """
 import json
 import os
-import shutil
 import subprocess
 import sys
 
-PLUGIN_ROOT = os.path.dirname(os.path.abspath(__file__))
-FOCUSERS_DIR = os.path.join(PLUGIN_ROOT, "focusers")
 
-
-def find_notifier():
-    """Find terminal-notifier binary."""
-    path = shutil.which("terminal-notifier")
-    if path:
-        return path
-    for p in ("/opt/homebrew/bin/terminal-notifier", "/usr/local/bin/terminal-notifier"):
-        if os.path.isfile(p):
-            return p
-    return None
-
+# ---------------------------------------------------------------------------
+# TTY detection
+# ---------------------------------------------------------------------------
 
 def get_tty():
     """Get the TTY by walking up the process tree until we find one."""
@@ -59,6 +48,10 @@ def get_tty():
     return None
 
 
+# ---------------------------------------------------------------------------
+# Terminal detection
+# ---------------------------------------------------------------------------
+
 def detect_terminal(pid=None):
     """Detect terminal type by walking the process tree."""
     if pid is None:
@@ -86,87 +79,55 @@ def detect_terminal(pid=None):
             break
         ppid, comm = info
         name = os.path.basename(comm).lower()
-        if "cmux" in name:
-            return "cmux"
-        if name.startswith("tmux"):
-            return "tmux"
         if name in ("iterm2", "iterm", "itermserver-main"):
             return "iterm2"
-        if name in ("terminal", "terminal.app"):
-            return "terminal_app"
         current = ppid
 
     return "unknown"
 
 
-def focus_terminal(terminal, tty, pid):
-    """Focus the correct terminal pane/tab by running the focuser script."""
-    focus_script = os.path.join(FOCUSERS_DIR, f"{terminal}.sh")
-    if not os.path.isfile(focus_script) or not tty:
-        return
+# ---------------------------------------------------------------------------
+# Notification
+# ---------------------------------------------------------------------------
+
+def send_notification(message, terminal, tty):
+    """Send a notification via iTerm2 OSC 9 or osascript fallback."""
+
+    if terminal == "iterm2" and tty:
+        try:
+            with open(tty, "w") as f:
+                f.write(f"\033]9;💬 {message}\007")
+            return
+        except OSError:
+            pass
+
     subprocess.Popen(
-        ["bash", focus_script, tty, str(pid or "")],
+        [
+            "osascript", "-e",
+            f'display notification "{message}" '
+            'with title "💬 Claude Code" sound name "Glass"',
+        ],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         start_new_session=True,
     )
 
 
-def send_notification(message, terminal, tty, pid):
-    """Send a notification and focus the terminal."""
-
-    # iTerm2 — OSC 9 escape sequence (auto-focuses on click)
-    if terminal == "iterm2" and tty:
-        try:
-            with open(tty, "w") as f:
-                f.write(f"\033]9;{message}\007")
-            return
-        except (OSError, IOError):
-            pass
-
-    # cmux — native notify
-    if terminal == "cmux":
-        cmux_bin = shutil.which("cmux")
-        if cmux_bin:
-            subprocess.Popen(
-                [cmux_bin, "notify", message],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
-            return
-
-    notifier = find_notifier()
-    if notifier:
-        subprocess.Popen(
-            [notifier, "-title", "Claude Code", "-message", message, "-sound", "Glass"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-    else:
-        subprocess.Popen(
-            [
-                "osascript", "-e",
-                f'display notification "{message}" '
-                'with title "Claude Code" sound name "Glass"',
-            ],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-
-    focus_terminal(terminal, tty, pid)
-
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 
 def main():
+    # Consume stdin (hook sends JSON via pipe) to avoid broken pipe
     try:
-        stdin_data = sys.stdin.read()
-        data = json.loads(stdin_data) if stdin_data.strip() else {}
-    except (json.JSONDecodeError, ValueError):
-        return
+        sys.stdin.read()
+    except (ValueError, IOError):
+        pass
 
     tty = get_tty()
     pid = os.getppid()
     terminal = detect_terminal(pid)
 
-    send_notification("Claude 有问题想问你", terminal, tty, pid)
+    send_notification("需要你帮忙做个决定～", terminal, tty)
 
 
 if __name__ == "__main__":

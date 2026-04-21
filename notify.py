@@ -5,16 +5,12 @@ claude-notify — Claude Code plugin for terminal-aware notifications.
 Detects the current terminal emulator, sends a macOS notification,
 and focuses the correct terminal pane/tab automatically.
 
-Supported terminals: iTerm2, tmux, cmux, Terminal.app
+Supported terminals: iTerm2 (via OSC 9), others (via osascript fallback).
 """
 import json
 import os
-import shutil
 import subprocess
 import sys
-
-PLUGIN_ROOT = os.path.dirname(os.path.abspath(__file__))
-FOCUSERS_DIR = os.path.join(PLUGIN_ROOT, "focusers")
 
 
 # ---------------------------------------------------------------------------
@@ -90,11 +86,9 @@ def walk_ancestors(pid, tree, max_depth=30):
 
 
 def detect_terminal(pid=None):
-    """Detect terminal type by walking the process tree from Claude's PID.
+    """Detect terminal type by walking the process tree.
 
-    Returns one of: "cmux", "tmux", "iterm2", "terminal_app", "unknown".
-    Detection order matters — tmux and cmux are checked first because they
-    can be nested inside any terminal app.
+    Returns one of: "iterm2", "unknown".
     """
     if pid is None:
         pid = os.getppid()
@@ -103,15 +97,8 @@ def detect_terminal(pid=None):
 
     for _, comm in walk_ancestors(pid, tree):
         name = os.path.basename(comm).lower()
-
-        if "cmux" in name:
-            return "cmux"
-        if name.startswith("tmux"):
-            return "tmux"
         if name in ("iterm2", "iterm", "itermserver-main"):
             return "iterm2"
-        if name in ("terminal", "terminal.app"):
-            return "terminal_app"
 
     return "unknown"
 
@@ -120,100 +107,37 @@ def detect_terminal(pid=None):
 # Notification dispatch
 # ---------------------------------------------------------------------------
 
-def find_alerter():
-    """Find alerter binary."""
-    path = shutil.which("alerter")
-    if path:
-        return path
-    for p in ("/opt/homebrew/bin/alerter", "/usr/local/bin/alerter"):
-        if os.path.isfile(p):
-            return p
-    return None
+def send_notification(terminal, tty, failure=False):
+    """Send notification via iTerm2 OSC 9 or osascript fallback."""
 
+    if failure:
+        osc_msg = "❌ 出错了，快来看看"
+        osascript_msg = "出错了，快来看看"
+        osascript_title = "❌ Claude Code"
+    else:
+        osc_msg = "✨ 活干完了，来瞅瞅 👀"
+        osascript_msg = "活干完了，来瞅瞅 👀"
+        osascript_title = "✨ Claude Code"
 
-def find_notifier():
-    """Find terminal-notifier binary."""
-    path = shutil.which("terminal-notifier")
-    if path:
-        return path
-    for p in ("/opt/homebrew/bin/terminal-notifier", "/usr/local/bin/terminal-notifier"):
-        if os.path.isfile(p):
-            return p
-    return None
+    if terminal == "iterm2" and tty:
+        # iTerm2 OSC 9: native notification with auto-focus on click
+        try:
+            with open(tty, "w") as f:
+                f.write(f"\033]9;{osc_msg}\007")
+            return
+        except OSError:
+            pass  # Fall through to osascript
 
-
-def focus_terminal(terminal, tty, pid):
-    """Focus the correct terminal pane/tab by running the focuser script."""
-    focus_script = os.path.join(FOCUSERS_DIR, f"{terminal}.sh")
-    if not os.path.isfile(focus_script) or not tty:
-        return
+    # osascript fallback — works on any Mac, no dependencies
     subprocess.Popen(
-        ["bash", focus_script, tty, str(pid or "")],
+        [
+            "osascript", "-e",
+            f'display notification "{osascript_msg}" '
+            f'with title "{osascript_title}" sound name "Glass"',
+        ],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         start_new_session=True,
     )
-
-
-def send_notification(terminal, tty, pid):
-    """Send notification and focus the terminal."""
-
-    # iTerm2 — use OSC 9 escape sequence for native notification.
-    # Clicking the notification auto-focuses the originating session/pane.
-    if terminal == "iterm2" and tty:
-        try:
-            with open(tty, "w") as f:
-                f.write("\033]9;Claude 完成了，来看看吧\007")
-            return
-        except (OSError, IOError):
-            pass  # Fall through to terminal-notifier
-
-    # cmux — use native cmux notify, no need for terminal-notifier
-    if terminal == "cmux":
-        cmux_bin = shutil.which("cmux")
-        if cmux_bin:
-            subprocess.Popen(
-                [cmux_bin, "notify", "Claude 完成了，来看看吧"],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
-            return
-        # cmux binary not found, fall through to terminal-notifier
-
-    notifier = find_notifier()
-    alerter = find_alerter()
-
-    if alerter:
-        cmd = [
-            alerter,
-            "--title", "Claude Code",
-            "--message", "Claude 完成了，来看看吧",
-            "--sound", "Glass",
-            "--timeout", "10",
-        ]
-        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                         start_new_session=True)
-    elif notifier:
-        cmd = [
-            notifier,
-            "-title", "Claude Code",
-            "-message", "Claude 完成了，来看看吧",
-            "-sound", "Glass",
-        ]
-        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                         start_new_session=True)
-    else:
-        subprocess.Popen(
-            [
-                "osascript", "-e",
-                'display notification "Claude 完成了，来看看吧" '
-                'with title "Claude Code" sound name "Glass"',
-            ],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-
-    # Directly focus the terminal — don't rely on notification click callback
-    focus_terminal(terminal, tty, pid)
 
 
 # ---------------------------------------------------------------------------
@@ -221,17 +145,19 @@ def send_notification(terminal, tty, pid):
 # ---------------------------------------------------------------------------
 
 def main():
+    # Consume stdin (hook sends JSON via pipe) to avoid broken pipe
     try:
-        stdin_data = sys.stdin.read()
-        data = json.loads(stdin_data) if stdin_data.strip() else {}
-    except (json.JSONDecodeError, ValueError):
-        data = {}
+        sys.stdin.read()
+    except (ValueError, IOError):
+        pass
+
+    failure = "--failure" in sys.argv
 
     tty = get_tty()
     pid = os.getppid()
     terminal = detect_terminal(pid)
 
-    send_notification(terminal, tty, pid)
+    send_notification(terminal, tty, failure)
 
 
 if __name__ == "__main__":
