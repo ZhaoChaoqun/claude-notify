@@ -117,8 +117,9 @@ def send_notification(message, terminal, tty):
 # ---------------------------------------------------------------------------
 
 def main():
+    # Consume stdin (hook sends JSON via pipe) to avoid broken pipe
     try:
-        stdin_data = sys.stdin.read()
+        sys.stdin.read()
     except (ValueError, IOError):
         pass
 
