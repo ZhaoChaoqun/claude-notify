@@ -12,9 +12,8 @@
     "notification",
     "terminal",
     "iterm2",
-    "tmux",
-    "cmux",
-    "focus",
-    "jump"
+    "macos",
+    "osc9",
+    "focus"
   ]
 }
