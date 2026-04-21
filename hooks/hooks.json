@@ -11,13 +11,13 @@
         ]
       }
     ],
-    "PermissionRequest": [
+    "StopFailure": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/approve.py",
-            "timeout": 130
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/notify.py --failure",
+            "timeout": 10
           }
         ]
       }
